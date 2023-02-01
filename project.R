@@ -13,6 +13,9 @@ install.packages('MASS')
 install.packages('umap')
 install.packages('qkerntool')
 install.packages('M3C')
+install.packages('gridExtra')
+install.packages("annotate")
+install.packages("hugene10stprobeset.db")
 
 library(GEOquery)
 library(limma)
@@ -28,6 +31,10 @@ library(MASS)
 library(qkerntool)
 library(umap)
 library(M3C)
+library(dplyr)
+library(gridExtra)
+library(annotate)
+library(hugene10stprobeset.db)
 
 setwd(getwd())
 
@@ -63,9 +70,11 @@ ph.normal = exprs(ph.raw)
 colors = c(rep("green",ncol(ph.normal)),rep("red",ncol(source_name.aml)))
 group = c(rep("healthy",ncol(ph.normal)),rep("aml",ncol(source_name.aml)))
 
+
+data.scaled = t(scale(t(data.normalized)))
 data = cbind(ph.normal,source_name.aml)
 data.normalized = normalizeQuantiles(data)
-data.scaled = t(scale(t(data.normalized)))
+
 
 
 pdf("result/boxplot_health.pdf",width = 32,height = 16)
@@ -144,6 +153,55 @@ dev.off()
 pdf("result/tSNE_Samples.pdf",width = 8,height = 6)
 tsne(data,labels=group)
 dev.off()
+
+#phase 2
+
+gset <- getGEO(series, GSEMatrix =TRUE, getGPL=TRUE,destdir = "data")
+
+if (length(gset) > 1) {
+  idx <- grep(platform, attr(gset, "names"))
+}else {
+  idx <- 1}
+
+
+gset <- gset[[idx]]
+
+source_name <- pData(phenoData(gset))$source_name_ch1
+source_name.CD34 = grepl("CD34",source_name)
+source_name.CD34_raw = gset[,source_name.CD34]
+
+source_name.aml = grepl("AML Patient",source_name)
+
+aml = exprs(source_name.raw)
+CD34 = exprs(source_name.CD34_raw)
+fac = function(cd34,aml)
+{
+  ifelse(cd34,"CD34",ifelse(aml,"AML","none"))
+}
+f <- factor(fac(c(source_name.CD34),c(source_name.aml)),levels=c("AML","CD34","none"))
+gset$description <- f
+design<- model.matrix(~ description + 0, gset)
+colnames(design) <- levels(f)
+fit = lmFit(gset, design) 
+cont.matrix = makeContrasts(AML - CD34, levels = design) 
+fit2 = contrasts.fit(fit, cont.matrix) 
+fit2 = eBayes(fit2, 0.01)
+compare_data =topTable(fit2,number=Inf,adjust="fdr")
+compare_data = subset(compare_data,select=c("ID","P.Value","adj.P.Val","logFC","mrna_assignment"))
+
+inc =  filter(compare_data, logFC > 1 & adj.P.Val < 0.05) 
+inc = inc[order(inc$logFC),]
+n_inc = unique( as.character(strsplit2( (inc$mrna_assignmentl),"///")))
+write.table(rownames(inc), file = "result/inc.txt",col.names = F,row.names = F,quote = F)
+
+
+dec =  filter(compare_data, logFC < -1 & adj.P.Val < 0.05) 
+dec = dec[order(dec$logFC,decreasing = T),]
+write.table(rownames(dec), file = "result/dec.txt",col.names = F,row.names = F,quote = F)
+
+
+
+
 
 
 
